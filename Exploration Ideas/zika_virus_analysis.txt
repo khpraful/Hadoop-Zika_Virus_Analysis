@@ -1,0 +1,79 @@
+hive
+----
+create database virus;
+
+create external table zika(report_date STRING, location STRING, location_type STRING, data_field STRING, data_field_code STRING, time_period STRING, time_period_type STRING, value INT, unit STRING) row format delimited fields terminated by ',' location '/user/<username>/external_table';
+
+LOAD DATA INPATH 'cdc_zika.csv' OVERWRITE INTO TABLE zika;
+
+select location, sum(value) as numcases from zika where data_field like "%confirmed%" group by location order by numcases desc limit 1;
+
+select location, sum(value) as numcases from zika where data_field like "%suspected%" group by location order by numcases desc limit 1;
+
+select sum(value) from zika where data_field like "%confirmed%";
+
+select sum(value) from zika where data_field like "%suspected%";
+
+select report_date, sum(value) from zika where data_field like "%confirmed%" group by report_date;
+
+pig
+---
+pig -useHCatalog
+
+zika_data = LOAD 'virus.zika' USING org.apache.hive.hcatalog.pig.HCatLoader();
+
+SPLIT zika_data INTO confirmed_cases IF data_field MATCHES '.*confirmed.*', discarded_cases IF data_field MATCHES '.*discarded.*', suspected_cases IF data_field MATCHES '.*suspected.*';
+
+SPLIT confirmed_cases INTO confirmed_date_slash IF report_date MATCHES '.*/.*', confirmed_date_underscore IF report_date MATCHES '.*_.*';
+
+SPLIT discarded_cases INTO discarded_date_slash IF report_date MATCHES '.*/.*', discarded_date_underscore IF report_date MATCHES '.*_.*';
+
+SPLIT suspected_cases INTO suspected_date_slash IF report_date MATCHES '.*/.*', suspected_date_underscore IF report_date MATCHES '.*_.*';
+
+month_wise_confirmed_slash = foreach confirmed_date_slash generate FLATTEN(STRSPLIT(report_date,'/',3)) as (month:chararray, day:chararray, year:chararray), data_field as (type:chararray),value as (value:int);  
+
+month_wise_confirmed_underscore = foreach confirmed_date_underscore generate SUBSTRING(report_date,6,2) as (month:chararray), data_field as (data_field:chararray),value as (value:int);  
+
+month_wise_discarded_slash = foreach discarded_date_slash generate FLATTEN(STRSPLIT(report_date,'/',3)) as (month:chararray, day:chararray, year:chararray), data_field as (type:chararray),value as (value:int);  
+
+month_wise_discarded_underscore = foreach discarded_date_underscore generate SUBSTRING(report_date,6,2) as (month:chararray), data_field as (data_field:chararray),value as (value:int);
+
+store month_wise_confirmed_slash into 'virus.zika_conf' using org.apache.hive.hcatalog.pig.HCatStorer();
+store month_wise_confirmed_underscore into 'virus.zika_conf' using org.apache.hive.hcatalog.pig.HCatStorer();
+
+store month_wise_discarded_slash into 'virus.zika_discard' using org.apache.hive.hcatalog.pig.HCatStorer();
+store month_wise_discarded_underscore into 'virus.zika_discard' using org.apache.hive.hcatalog.pig.HCatStorer();
+
+A = foreach confirmed_date_slash generate FLATTEN(STRSPLIT(report_date,'/',3)) as (month:chararray, day:chararray, year:chararray), location, data_field,value;
+B = foreach A generate CONCAT(year,'/',month,'/',day), $3, $4, $5 ;
+C = foreach B generate ToDate($0,'yyyy/MM/dd')as (report_date:datetime), $1 as (location:chararray), $2 as (type:chararray), $3 as (value:int);
+store C into 'virus.zika_conf_trend1' using org.apache.hive.hcatalog.pig.HCatStorer();
+D = foreach confirmed_date_underscore generate REPLACE(report_date,'-','_'), location, data_field,value;
+E = foreach D generate FLATTEN(STRSPLIT($0,'_',3)) as (year:chararray, month:chararray, day:chararray), location, data_field,value;
+F = foreach E generate CONCAT(year,'/',month,'/',day), $3, $4, $5 ;
+G = foreach F generate ToDate($0,'yyyy/MM/dd') as (report_date:datetime), $1 as (location:chararray), $2 as (type:chararray), $3 as (value:int);
+store G into 'virus.zika_conf_trend1' using org.apache.hive.hcatalog.pig.HCatStorer();
+
+hive
+----
+create table zika_conf (month string, day string, year string, type string, value int) row format delimited fields terminated by ',';
+
+create table zika_discard (month string, day string, year string, type string, value int) row format delimited fields terminated by ',';
+
+create table zika_conf_trend (report_date date, location string, type string, value int);
+
+select month, sum(value) as total from zika_conf group by month order by total desc;
+
+select month, sum(value) as total from zika_discard group by month order by total desc;
+
+select location, report_date, sum(value) as total from zika_conf_trend1 group by location, report_date order by location, report_date limit 20 ;
+
+select data_field, sum(value) as total from zika where data_field like "%confirmed_age%" or data_field like "%suspected_age%" group by data_field order by total desc;
+
+
+
+	
+
+
+
+
